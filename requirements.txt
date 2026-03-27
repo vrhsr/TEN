@@ -1,0 +1,47 @@
+# ── Web framework ─────────────────────────────────────────────
+fastapi==0.115.12
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+
+# ── Database ──────────────────────────────────────────────────
+sqlalchemy==2.0.39
+alembic==1.15.2
+pymysql==1.1.1
+cryptography==44.0.0
+
+# ── HTTP client ───────────────────────────────────────────────
+httpx==0.28.1
+tenacity==9.0.0
+
+# ── Pydantic / settings ───────────────────────────────────────
+pydantic==2.11.7
+pydantic-settings==2.10.1
+email-validator==2.2.0
+
+# ── AWS ───────────────────────────────────────────────────────
+boto3==1.37.22
+
+# ── AI / LLM ─────────────────────────────────────────────────
+openai==1.68.2
+langchain-core==0.3.83
+langchain-openai==0.2.14
+langgraph==0.2.66
+
+# ── OCR ───────────────────────────────────────────────────────
+pytesseract==0.3.13
+Pillow==11.1.0
+pdf2image==1.17.0
+
+# ── Scheduler ────────────────────────────────────────────────
+apscheduler==3.10.4
+
+# ── Observability / config ───────────────────────────────────
+python-dotenv==1.0.1
+
+# ── Testing ───────────────────────────────────────────────────
+pytest==8.3.5
+pytest-asyncio==0.25.3
+respx==0.21.1
+
+# ── Temporal (optional) ──────────────────────────────────────
+# temporalio==1.9.0
