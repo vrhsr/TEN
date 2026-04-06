@@ -179,10 +179,11 @@ class OrchestrationEngine:
                     "tools": result.get("tools_invoked", []),
                 },
                 "confidence_score": result.get("confidence_score"),
+                # In engine.py, when writing final step history:
                 "output_summary_json": {
                     "next_state": result.get("next_state"),
+                    "outcome_code": result.get("outcome_code"),
                     "note": result.get("note"),
-                    "next_wake_at": result.get("next_wake_at"),
                 },
                 "error_detail": error_detail,
             })
@@ -257,41 +258,35 @@ class OrchestrationEngine:
     # ── Dispatch table ────────────────────────────────────────────────────
 
     def _dispatch(self, handler_key: str, state: dict) -> dict:
+        
+        # ──► DEBUG
+        print(f"\n   _dispatch called:")
+        print(f"   handler_key : {handler_key}")
+        print(f"   state keys  : {list(state.keys())}")
+        print(f"   case keys   : {list(state.get('case', {}).keys())}")
+        print(f"   task_id     : {state.get('task_id')}")
+        
         dispatch = {
             HANDLER_INITIALIZE: lambda s: run_initialize(s, self.tools),
-            HANDLER_GATHER_REGISTRATION: lambda s: run_gather_registration(
-                s, self.tools, self.profile
-            ),
-            HANDLER_VERIFY_REGISTRATION: lambda s: run_verify_registration(
-                s, self.tools
-            ),
-            HANDLER_VERIFY_ELIGIBILITY: lambda s: run_verify_eligibility(
-                s, self.tools
-            ),
-            HANDLER_SELF_REGISTRATION: lambda s: run_self_registration(
-                s, self.tools
-            ),
-            HANDLER_HOSPITAL_FACESHEET_REQUEST: lambda s: run_hospital_facesheet_request(
-                s, self.tools
-            ),
-            HANDLER_NORMALIZE_CASE: lambda s: run_normalize_case(
-                s, self.tools
-            ),
-            HANDLER_CLOSE_OUT: lambda s: run_close_out(s, self.tools),
+            # ... rest of handlers
         }
 
         fn = dispatch.get(handler_key)
         if fn is None:
-            log.error(
-                "engine.unknown_handler",
-                case_id=state.get("case", {}).get("case_id"),
-                handler_key=handler_key,
-            )
-            raise ValueError(
-                f"No handler registered for key: {handler_key}"
-            )
-        return fn(state)
-
+            raise ValueError(f"No handler registered for key: {handler_key}")
+        
+        # ──► DEBUG
+        print(f"   Calling handler: {handler_key}")
+        
+        try:
+            result = fn(state)
+            print(f"   Handler result: {result}")
+            return result
+        except Exception as exc:
+            print(f"   Handler EXCEPTION: {type(exc).__name__}: {exc}")
+            import traceback
+            traceback.print_exc()
+            raise
 
 def _offset_iso(minutes: int = 0, hours: int = 0) -> str:
     dt = datetime.now(timezone.utc) + timedelta(

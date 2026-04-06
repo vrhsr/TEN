@@ -26,34 +26,60 @@ from shared.constants import (
     TERMINAL_STATES,
 )
 
+# ── Demographics workflow entry states ────────────────────────
+# These are the states that trigger the Initialize handler
+DEMOGRAPHICS_ENTRY_STATES = {
+    "DEMOGRAPHICS_CREATED",       # ──► Our seeded state ✅
+    "CLAIM_INITIALIZE",           # ──► Standard entry state
+    STATE_CLAIM_INITIALIZE,       # ──► From constants
+}
+
 # Maps case state_code → handler key
 STATE_TO_HANDLER: dict[str, str] = {
-    STATE_CLAIM_INITIALIZE: HANDLER_INITIALIZE,
-    STATE_START_REGISTRATION_QUEUE: HANDLER_GATHER_REGISTRATION,
+
+    # ── Initialize Demographics Flow ──────────────────────────
+    STATE_CLAIM_INITIALIZE          : HANDLER_INITIALIZE,
+    "DEMOGRAPHICS_CREATED"          : HANDLER_INITIALIZE,  # ──► ADD THIS ✅
+
+    # ── Registration Flow ─────────────────────────────────────
+    STATE_START_REGISTRATION_QUEUE  : HANDLER_GATHER_REGISTRATION,
+
+    # ── Verify Registration ───────────────────────────────────
     STATE_VERIFY_REGISTRATION_INFO_QUEUE: HANDLER_VERIFY_REGISTRATION,
+
+    # ── Eligibility Verification ──────────────────────────────
     STATE_ELIGIBILITY_VERIFICATION_QUEUE: HANDLER_VERIFY_ELIGIBILITY,
-    STATE_SELF_REGISTRATION_QUEUE: HANDLER_SELF_REGISTRATION,
-    STATE_HOSPITAL_FACESHEET_FAX_QUEUE: HANDLER_HOSPITAL_FACESHEET_REQUEST,
+
+    # ── Self Registration ─────────────────────────────────────
+    STATE_SELF_REGISTRATION_QUEUE   : HANDLER_SELF_REGISTRATION,
+
+    # ── Hospital Facesheet ────────────────────────────────────
+    STATE_HOSPITAL_FACESHEET_FAX_QUEUE     : HANDLER_HOSPITAL_FACESHEET_REQUEST,
     STATE_HOSPITAL_FACESHEET_DOWNLOAD_QUEUE: HANDLER_HOSPITAL_FACESHEET_REQUEST,
-    # Human queue states that need normalization / re-advance after human completes task
-    STATE_CLINIC_INSURANCE_IMAGE_DOWNLOAD_QUEUE: HANDLER_NORMALIZE_CASE,
-    STATE_FIX_ELIGIBILITY_ERROR_QUEUE: HANDLER_NORMALIZE_CASE,
-    STATE_MANUAL_ELIGIBILITY_VERIFICATION_QUEUE: HANDLER_NORMALIZE_CASE,
-    STATE_PATIENT_DEDUPLICATION_QUEUE: HANDLER_NORMALIZE_CASE,
-    STATE_FACESHEET_NOT_RECEIVED_COORDINATOR_QUEUE: HANDLER_NORMALIZE_CASE,
+
+    # ── Human Queue States → Normalize ───────────────────────
+    STATE_CLINIC_INSURANCE_IMAGE_DOWNLOAD_QUEUE          : HANDLER_NORMALIZE_CASE,
+    STATE_FIX_ELIGIBILITY_ERROR_QUEUE                    : HANDLER_NORMALIZE_CASE,
+    STATE_MANUAL_ELIGIBILITY_VERIFICATION_QUEUE          : HANDLER_NORMALIZE_CASE,
+    STATE_PATIENT_DEDUPLICATION_QUEUE                    : HANDLER_NORMALIZE_CASE,
+    STATE_FACESHEET_NOT_RECEIVED_COORDINATOR_QUEUE       : HANDLER_NORMALIZE_CASE,
     STATE_SELF_REGISTRATION_NOT_RECEIVED_COORDINATOR_QUEUE: HANDLER_NORMALIZE_CASE,
-    # Terminal: duplicate detected — close out
-    STATE_CASE_CLOSED_DUPLICATE: HANDLER_CLOSE_OUT,
+
+    # ── Terminal States ───────────────────────────────────────
+    STATE_CASE_CLOSED_DUPLICATE     : HANDLER_CLOSE_OUT,
 }
 
 
 def resolve_handler(case_state: str) -> str:
-    # Explicit mapping always wins — allows terminal states like CASE_CLOSED_DUPLICATE
-    # to route to their dedicated handler (e.g., HANDLER_CLOSE_OUT).
+    """
+    Resolve handler key from case state_code.
+    Explicit mapping always wins.
+    Falls back to NORMALIZE for unknown states.
+    """
     if case_state in STATE_TO_HANDLER:
         return STATE_TO_HANDLER[case_state]
-    # Generic terminal states with no explicit mapping → no-op
+
     if case_state in TERMINAL_STATES:
         return HANDLER_NORMALIZE_CASE
-    return HANDLER_NORMALIZE_CASE
 
+    return HANDLER_NORMALIZE_CASE

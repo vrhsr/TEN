@@ -1,41 +1,66 @@
-from typing import Any, TypedDict
+# graph/state.py
+
+from typing import TypedDict, Optional, List, Any
 
 
-class DemoGraphState(TypedDict, total=False):
-    # Core case context (loaded at the start of every advance_case call)
-    case: dict                          # RCM_CASE row as dict
-    patient: dict                       # PATIENT row as dict
-    insurances: list[dict]              # INSURANCE rows enriched with payer info
-    facility: dict | None               # FACILITY row as dict
-    open_tasks: list[dict]              # RCM_TASK rows (open)
-    facts: dict[str, str]               # fact_key → fact_value_str (current facts)
+class DemographicsAgentState(TypedDict):
 
-    # Intermediate decisioning outputs
-    has_duplicate: bool
-    duplicate_candidates: list[dict]
-    is_self_pay: bool
-    has_insurance_image: bool
-    has_direct_emr_access: bool
-    emr_system: str | None
+    # ─────────────────────────────────────
+    # Case & Task Identifiers
+    # ─────────────────────────────────────
+    case_id         : int
+    task_id         : int
+    clinic_id       : int
 
-    # Eligibility outputs
-    eligibility_result: dict | None
-    ocr_result: dict | None
-    llm_result: dict | None
+    # ─────────────────────────────────────
+    # Facts Loaded from RCM_CASE_FACT
+    # ─────────────────────────────────────
+    patient_fact        : Optional[dict]
+    insurance_fact      : Optional[dict]
+    demographics_fact   : Optional[dict]
 
-    # Handler resolution
-    selected_handler: str
-    handler_version: str
+    # ─────────────────────────────────────
+    # Task + Case Details
+    # ─────────────────────────────────────
+    task_details    : Optional[dict]
+    case_details    : Optional[dict]
 
-    # Final outputs written back by engine
-    next_state: str
-    next_wake_at: str | None           # ISO-8601 datetime string
-    outcome_code: str
-    handler_key: str
-    note: str | None
-    facts_considered: dict[str, Any]
-    tools_invoked: list[str]
-    confidence_score: float
+    # ─────────────────────────────────────
+    # Node 2: Duplicate Check
+    # ─────────────────────────────────────
+    is_duplicate            : bool
+    duplicate_patient_ids   : Optional[List[int]]   # list of duplicate patient IDs found
+    duplicate_reason        : Optional[str]         # reason why flagged as duplicate
 
-    # Error tracking
-    error: str | None
+    # ─────────────────────────────────────
+    # Node 3: Decision Flags
+    # ─────────────────────────────────────
+    is_self_pay             : bool
+    demographics_complete   : bool
+    insurance_verified      : bool
+    days_since_verified     : Optional[int]
+
+    # ─────────────────────────────────────
+    # Routing
+    # ─────────────────────────────────────
+    next_queue          : Optional[str]
+    next_state_code     : Optional[str]
+
+    # ─────────────────────────────────────
+    # Payload to store in RCM_TASK
+    # ─────────────────────────────────────
+    task_payload        : Optional[dict]
+
+    # ─────────────────────────────────────
+    # Audit / Explainability
+    # ─────────────────────────────────────
+    facts_considered    : Optional[List[str]]
+    tools_invoked       : Optional[List[str]]
+    confidence_score    : Optional[float]
+    decision_reason     : Optional[str]
+
+    # ─────────────────────────────────────
+    # Error Handling
+    # ─────────────────────────────────────
+    error           : Optional[str]
+    attempt_count   : int
