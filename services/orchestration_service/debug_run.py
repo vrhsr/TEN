@@ -1,5 +1,4 @@
-# orchestration_service/run.py
-
+# orchestration_service/debug_run.py
 import sys
 import os
 
@@ -10,27 +9,18 @@ project_dir  = os.path.dirname(services_dir)
 sys.path.insert(0, current_dir)
 sys.path.insert(0, project_dir)
 
-# ──► Force set the correct .env path BEFORE importing anything
 os.environ["ENV_FILE"] = os.path.join(project_dir, ".env")
-
 # Tools URL is loaded from .env
 # os.environ["TOOLS_BASE_URL"] = "https://app.staging.trillium.health/temporal-rcm-workflow"
 
-print(f"\n{'='*60}")
-print(f"   Project dir  : {project_dir}")
-print(f"   Current dir  : {current_dir}")
-print(f"   Shared exists: {os.path.exists(os.path.join(project_dir, 'shared'))}")
-print(f"   .env exists  : {os.path.exists(os.path.join(project_dir, '.env'))}")
-print(f"   TOOLS_BASE_URL: {os.environ.get('TOOLS_BASE_URL')}")
-print(f"{'='*60}\n")
-
 import uvicorn
+from app.main import app
 
 if __name__ == "__main__":
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
-        port=8003,
-        reload=True,
+        port=8005,
+        reload=False,
         log_level="debug",
     )

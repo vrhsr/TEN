@@ -137,8 +137,30 @@ def run_initialize(state: dict, tools_client) -> dict:
 
     print("\n   Node 2: Check Duplicate")
 
-    has_duplicates = False
-    duplicate_patients = []
+    # ── Call duplicate check API with real patient details ────────────
+    dup_payload = {
+        "first_name" : patient_fact.get("FIRST_NAME") if patient_fact else None,
+        "last_name"  : patient_fact.get("LAST_NAME")  if patient_fact else None,
+        "dob"        : patient_fact.get("DATE_OF_BIRTH") if patient_fact else None,
+        "patient_id" : case.get("patient_id"),
+    }
+    
+    try:
+        dup_result = tools_client.duplicate_check(
+            dup_payload,
+            clinic_id=case.get("clinic_id", 0),
+            patient_id=case.get("patient_id", 0),
+        )
+        tools_invoked.append("duplicate_check")
+        
+        has_duplicates     = dup_result.get("has_duplicates", False)
+        duplicate_patients = dup_result.get("candidates", [])
+        
+        print(f"   duplicate_check → has_duplicates={has_duplicates} ({len(duplicate_patients)} candidates)")
+    except Exception as exc:
+        print(f"   Node 2: duplicate_check FAILED → {exc}")
+        has_duplicates = False
+        duplicate_patients = []
 
     if has_duplicates:
         duplicate_ids = [str(d.get("patient_id", "")) for d in duplicate_patients]
@@ -186,7 +208,7 @@ def run_initialize(state: dict, tools_client) -> dict:
             duration_ms=_ms(node2_start),
             outcome_code="DUPLICATE_FOUND",
             output_summary={
-                "next_state": STATE_CASE_CLOSED_DUPLICATE,
+                "next_state": "HUMAN_QUEUE",
                 "duplicate_ids": duplicate_ids,
             },
         )
@@ -194,7 +216,7 @@ def run_initialize(state: dict, tools_client) -> dict:
         return _build_result(
             case_id=case_id,
             task_id=task_id,
-            next_state=STATE_CASE_CLOSED_DUPLICATE,
+            next_state="HUMAN_QUEUE",
             outcome_code="DUPLICATE_PATIENT",
             note=f"Duplicate found: {len(duplicate_patients)} candidate(s).",
             facts_considered=facts_considered,
@@ -308,7 +330,7 @@ def run_initialize(state: dict, tools_client) -> dict:
 
     if not demographics_complete or not has_insurance:
         if place_of_service == "clinic":
-            next_state = "CHECK_INS_IN_CLINIC_EMR"
+            next_state = "HUMAN_QUEUE"
             outcome_code = "REGISTRATION_INCOMPLETE_CLINIC"
         else:
             next_state = STATE_START_REGISTRATION_QUEUE

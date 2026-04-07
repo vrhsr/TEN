@@ -72,6 +72,9 @@ class OrchestrationEngine:
             task_id=task_id,
         )
 
+        tools_invoked: list[str] = []
+        start_time_sec = time.time()
+
         # ── 1. Load full case context ─────────────────────────────────────
         case = self.tools.get_case(case_id)
         if not case:
@@ -108,6 +111,7 @@ class OrchestrationEngine:
             }
 
         # ── 3. Resolve handler ────────────────────────────────────────────
+        # ── 3. Resolve handler ────────────────────────────────────────────
         handler_key = resolve_handler(state_code)
 
         log.info(
@@ -115,6 +119,9 @@ class OrchestrationEngine:
             case_id=case_id,
             handler_key=handler_key,
         )
+
+        # NOTE: DB Idempotency check and IN_PROGRESS state updates have been removed.
+        # State lifecycle is entirely deferred to the workflow engine.
 
         # ── 4. Build LangGraph state and dispatch ─────────────────────────
         graph_state = {
@@ -148,6 +155,31 @@ class OrchestrationEngine:
                 error=str(exc),
                 total_duration_ms=error_ms,
             )
+            
+            # [NEW] Step 4: Centralized Error Logging
+            if task_id:
+                try:
+                    self.tools.log_error(
+                        task_id=task_id,
+                        case_id=case_id,
+                        node_key=handler_key,
+                        error_message=str(exc),
+                        error_source="LangGraph Engine",
+                        error_retryable=False,
+                        error_json={"traceback": error_detail, "handler": handler_key}
+                    )
+                except Exception as _exc:
+                    log.warning("engine.step_4_error_log_failed", error=str(_exc))
+            
+            # [NEW] Step 5: Close Out as ERROR
+            if task_id:
+                try:
+                    self.tools.update_task(task_id, {
+                        "outcome_code": "ERROR",
+                        "notes": f"LangGraph execution failed in {handler_key}. See /errors log."
+                    })
+                except: pass
+
             result = {
                 "handler_key": handler_key,
                 "next_state": state_code,
@@ -164,7 +196,8 @@ class OrchestrationEngine:
         ended_at = datetime.now(timezone.utc)
         try:
             self.tools.create_step_history({
-                "case_id": case_id,
+                "rcm_case_id": case_id,
+                "rcm_task_id": task_id,
                 "correlation_id": correlation_id,
                 "trigger_type": "ADVANCE",
                 "handler_key": handler_key,
@@ -179,7 +212,6 @@ class OrchestrationEngine:
                     "tools": result.get("tools_invoked", []),
                 },
                 "confidence_score": result.get("confidence_score"),
-                # In engine.py, when writing final step history:
                 "output_summary_json": {
                     "next_state": result.get("next_state"),
                     "outcome_code": result.get("outcome_code"),
@@ -194,39 +226,29 @@ class OrchestrationEngine:
                 error=str(exc),
             )
 
-        # ── 6. Update RCM_CASE ────────────────────────────────────────────
+        # ── 6. Process Task (Unified Workflow Engine Action) ──────────────────────
         next_state = result.get("next_state", state_code)
-        next_wake_at = result.get("next_wake_at")
         terminal = next_state in TERMINAL_STATES
+        next_wake_at = result.get("next_wake_at")
 
-        update_payload: dict = {
-            "state_code": next_state,
-            "next_action_at": next_wake_at,
-        }
-        if terminal:
-            update_payload["terminal_outcome_code"] = next_state
-            update_payload["closed_at"] = ended_at.isoformat()
+        if task_id and not error_detail:
+            try:
+                # [NEW] Step 5: Close Out (Storage)
+                # Dumping the full execution result into the payload so Temporal UI has everything
+                task_payload = {
+                    "outcome_code": result.get("outcome_code", "UNKNOWN"),
+                    "note": result.get("note", ""),
+                    "next_state": next_state,
+                    "confidence_score": result.get("confidence_score", 0.0),
+                    "tools_invoked": result.get("tools_invoked", []),
+                }
+                log.info("engine.process_task", task_id=task_id, payload=task_payload)
+                self.tools.update_task(task_id, task_payload)
+                tools_invoked.append("process_task")
+            except Exception as exc:
+                log.error("engine.process_task_failed", task_id=task_id, error=str(exc))
 
-        # Preserve existing context_json and merge result summary
-        existing_ctx = case.get("context_json") or {}
-        update_payload["context_json"] = {
-            **existing_ctx,
-            "last_handler": handler_key,
-            "last_outcome": result.get("outcome_code"),
-            "last_note": result.get("note"),
-            "last_advanced_at": ended_at.isoformat(),
-        }
-
-        try:
-            self.tools.update_case(case_id, update_payload)
-        except Exception as exc:
-            log.error(
-                "engine.case_update_failed",
-                case_id=case_id,
-                error=str(exc),
-            )
-
-        # ── 7. Log graph completion ───────────────────────────────────────
+        # ── 8. Log graph completion ───────────────────────────────────────
         if not error_detail:
             total_ms = round((time.time() - start_time_sec) * 1000)
             log.info(
@@ -259,12 +281,7 @@ class OrchestrationEngine:
 
     def _dispatch(self, handler_key: str, state: dict) -> dict:
         
-        # ──► DEBUG
-        print(f"\n   _dispatch called:")
-        print(f"   handler_key : {handler_key}")
-        print(f"   state keys  : {list(state.keys())}")
-        print(f"   case keys   : {list(state.get('case', {}).keys())}")
-        print(f"   task_id     : {state.get('task_id')}")
+
         
         dispatch = {
             HANDLER_INITIALIZE: lambda s: run_initialize(s, self.tools),
@@ -275,17 +292,12 @@ class OrchestrationEngine:
         if fn is None:
             raise ValueError(f"No handler registered for key: {handler_key}")
         
-        # ──► DEBUG
-        print(f"   Calling handler: {handler_key}")
+
         
         try:
             result = fn(state)
-            print(f"   Handler result: {result}")
             return result
         except Exception as exc:
-            print(f"   Handler EXCEPTION: {type(exc).__name__}: {exc}")
-            import traceback
-            traceback.print_exc()
             raise
 
 def _offset_iso(minutes: int = 0, hours: int = 0) -> str:

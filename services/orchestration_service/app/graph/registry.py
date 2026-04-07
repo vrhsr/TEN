@@ -39,7 +39,7 @@ STATE_TO_HANDLER: dict[str, str] = {
 
     # ── Initialize Demographics Flow ──────────────────────────
     STATE_CLAIM_INITIALIZE          : HANDLER_INITIALIZE,
-    "DEMOGRAPHICS_CREATED"          : HANDLER_INITIALIZE,  # ──► ADD THIS ✅
+    "DEMOGRAPHICS_CREATED"          : HANDLER_INITIALIZE,   
 
     # ── Registration Flow ─────────────────────────────────────
     STATE_START_REGISTRATION_QUEUE  : HANDLER_GATHER_REGISTRATION,

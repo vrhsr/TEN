@@ -57,7 +57,7 @@ class ToolsClient:
         wait=wait_exponential(min=1, max=8),
     )
     def get_task_and_case(self, task_id: int) -> dict:
-        url = f"/api/v1/workflow-engine/{task_id}/rcm_task_and_rcm_case"
+        url = f"/api/v1/workflow-engine/tasks/{task_id}"
         print(f"\n   get_task_and_case → Calling: {self._base_url}{url}")
 
         r = self._http.get(url)
@@ -73,116 +73,10 @@ class ToolsClient:
         wait=wait_exponential(min=1, max=8),
     )
     def update_task(self, task_id: int, payload: dict) -> dict:
-        url = f"/api/v1/workflow-engine/{task_id}/rcm_task/process"
+        url = f"/api/v1/workflow-engine/tasks/{task_id}/process"
         r   = self._http.post(url, json={"payload": payload})
         _raise_on_4xx_5xx(r)
         return r.json()
-
-    def create_task(self, payload: dict) -> dict:
-        r = self._http.post("/api/v1/workflow-engine/start", json=payload)
-        _raise_on_4xx_5xx(r)
-        return r.json()
-
-    # ══════════════════════════════════════════════════════════════════
-    # TASK — DIRECT DB LOOKUP                ← ✅ STILL INSIDE CLASS
-    # ══════════════════════════════════════════════════════════════════
-
-    # app/clients/tools_client.py
-
-    def get_task_from_db(self, task_id: int) -> dict | None:
-        """
-        Direct DB lookup for RCM_TASK.
-        Uses pydantic Settings (reads .env correctly).
-        """
-        settings = get_settings()                   # ← already imported at top
-
-        host     = settings.rcm_db_host
-        port     = settings.rcm_db_port
-        user     = settings.rcm_db_user
-        password = settings.rcm_db_password
-        database = settings.rcm_db_database
-
-        print(f"\n   get_task_from_db → Connecting to DB")
-        print(f"   get_task_from_db → host    : {host}:{port}")
-        print(f"   get_task_from_db → user    : {user}")
-        print(f"   get_task_from_db → password: {'SET ✅' if password else 'EMPTY ❌'}")
-        print(f"   get_task_from_db → database: {database}")
-        print(f"   get_task_from_db → task_id : {task_id}")
-
-        try:
-            conn = pymysql.connect(
-                host            = host,
-                port            = port,
-                user            = user,
-                password        = password,
-                database        = database,
-                cursorclass     = pymysql.cursors.DictCursor,
-                connect_timeout = 10,
-            )
-        except Exception as exc:
-            log.error("get_task_from_db.connect_failed", error=str(exc))
-            raise
-
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT
-                        RCM_TASK_ID,
-                        RCM_CASE_ID,
-                        CLINIC_ID,
-                        TASK_TYPE,
-                        STATE_CODE,
-                        QUEUE_ID,
-                        PRIORITY_CODE,
-                        HANDLER_KEY,
-                        PAYLOAD_JSON,
-                        RESULT_JSON,
-                        OUTCOME,
-                        ATTEMPT_COUNT,
-                        OPENED_AT,
-                        DUE_AT,
-                        CREATED_AT,
-                        UPDATED_AT
-                    FROM RCM_TASK
-                    WHERE RCM_TASK_ID = %s
-                    LIMIT 1
-                    """,
-                    (task_id,),
-                )
-                row = cur.fetchone()
-
-                if not row:
-                    print(f"   get_task_from_db → Task {task_id} NOT found in DB ❌")
-                    return None
-
-                print(
-                    f"   get_task_from_db → Found task {task_id} "
-                    f"→ case_id={row['RCM_CASE_ID']} ✅"
-                )
-
-                return {
-                    "task_id"      : row["RCM_TASK_ID"],
-                    "rcm_task_id"  : row["RCM_TASK_ID"],
-                    "rcm_case_id"  : row["RCM_CASE_ID"],
-                    "case_id"      : row["RCM_CASE_ID"],
-                    "clinic_id"    : row["CLINIC_ID"],
-                    "task_type"    : row["TASK_TYPE"],
-                    "state_code"   : row["STATE_CODE"],
-                    "queue_id"     : row["QUEUE_ID"],
-                    "priority_code": row["PRIORITY_CODE"],
-                    "handler_key"  : row["HANDLER_KEY"],
-                    "payload_json" : row["PAYLOAD_JSON"],
-                    "result_json"  : row["RESULT_JSON"],
-                    "outcome"      : row["OUTCOME"],
-                    "attempt_count": row["ATTEMPT_COUNT"],
-                    "opened_at"    : str(row["OPENED_AT"])  if row["OPENED_AT"]  else None,
-                    "due_at"       : str(row["DUE_AT"])     if row["DUE_AT"]     else None,
-                    "created_at"   : str(row["CREATED_AT"]) if row["CREATED_AT"] else None,
-                    "updated_at"   : str(row["UPDATED_AT"]) if row["UPDATED_AT"] else None,
-                }
-        finally:
-            conn.close()
 
     # ══════════════════════════════════════════════════════════════════
     # CASE                                   ← ✅ STILL INSIDE CLASS
@@ -234,9 +128,6 @@ class ToolsClient:
             log.error("tools_client.get_case.failed", case_id=case_id, error=str(exc))
             return None
 
-    def update_case(self, case_id: int, payload: dict) -> dict:
-        log.info("tools_client.update_case", case_id=case_id)
-        return {"updated": True, "case_id": case_id}
 
     # ══════════════════════════════════════════════════════════════════
     # FACTS
@@ -329,7 +220,7 @@ class ToolsClient:
         }
         try:
             r = self._http.post(
-                "/api/v1/workflow-engine/log-error/rcm_error",
+                "/api/v1/workflow-engine/errors",
                 json=body,
             )
             _raise_on_4xx_5xx(r)
@@ -343,23 +234,28 @@ class ToolsClient:
     # ══════════════════════════════════════════════════════════════════
 
     def create_step_history(self, payload: dict) -> dict:
+        # Match the production API schema (Uppercase keys as confirmed)
         body = {
-            "rcm_case_id"        : payload.get("case_id"),
-            "rcm_task_id"        : None,
-            "run_id"             : payload.get("correlation_id"),
-            "correlation_id"     : payload.get("correlation_id"),
-            "node_key"           : payload.get("handler_key", "UNKNOWN"),
-            "node_index"         : None,
-            "started_at"         : payload.get("started_at"),
-            "ended_at"           : payload.get("ended_at"),
-            "duration_ms"        : None,
-            "outcome_code"       : payload.get("outcome_code"),
-            "output_summary_json": payload.get("output_summary_json"),
-            "error_message"      : payload.get("error_detail"),
+            "rcm_case_id"         : payload.get("rcm_case_id", payload.get("case_id")),
+            "rcm_task_id"         : payload.get("rcm_task_id", payload.get("task_id")),
+            "run_id"              : payload.get("correlation_id"),
+            "correlation_id"      : payload.get("correlation_id"),
+            "node_key"            : payload.get("handler_key", "UNKNOWN"),
+            "node_index"          : payload.get("node_index"),
+            "started_at"          : payload.get("started_at"),
+            "ended_at"            : payload.get("ended_at"),
+            "duration_ms"         : payload.get("duration_ms"),
+            "outcome_code"        : payload.get("outcome_code"),
+            "output_summary_json" : payload.get("output_summary_json"),
+            "error_message"       : payload.get("error_detail"),
         }
+        
+        # DEBUG: Resolve create_step_history_failed errors
+        print(f"\n   [DEBUG] STEP HISTORY PAYLOAD: {json.dumps(body, indent=2)}")
+        
         try:
             r = self._http.post(
-                "/api/v1/workflow-engine/rcm_node_history",
+                "/api/v1/workflow-engine/node-history",
                 json=body,
             )
             _raise_on_4xx_5xx(r)
@@ -378,8 +274,21 @@ class ToolsClient:
     def get_patient_insurances(self, patient_id: int) -> list[dict]:
         return []
 
-    def duplicate_check(self, patient_id: int) -> dict:
-        return {"has_duplicates": False, "candidates": []}
+    def duplicate_check(self, payload: dict, clinic_id: int, patient_id: int) -> dict:
+        """
+        POST /api/v1/patients/{clinic_id}/{patient_id}/duplicate-check
+        Payload: {first_name, last_name, dob, patient_id}
+        """
+        url = f"/api/v1/patients/{clinic_id}/{patient_id}/duplicate-check"
+        print(f"   duplicate_check → Calling: {self._base_url}{url}")
+        
+        try:
+            r = self._http.post(url, json=payload)
+            _raise_on_4xx_5xx(r)
+            return r.json().get("data", {"has_duplicates": False, "candidates": []})
+        except Exception as exc:
+            log.warning("tools_client.duplicate_check_failed", error=str(exc))
+            return {"has_duplicates": False, "candidates": []}
 
     def has_insurance_image(self, patient_id: int, clinic_id: int | None = None) -> dict:
         return {"has_image": False}

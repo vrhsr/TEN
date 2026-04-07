@@ -36,16 +36,16 @@ class Settings(BaseSettings):
     allofactor_db_max_overflow: int = 10
 
     # Workflow DB (read-write)
-    workflow_db_host: str = "localhost"
+    workflow_db_host: str = "54.211.219.53"
     workflow_db_port: int = 3306
-    workflow_db_name: str = "rcm_workflow"
+    workflow_db_name: str = "trillium_stage_workflow_v4"
     workflow_db_user: str = "root"
-    workflow_db_password: str = "secret"
+    workflow_db_password: str = "1615Trill#14%"
     workflow_db_pool_size: int = 5
     workflow_db_max_overflow: int = 10
 
     # Service URLs
-    tools_base_url: str = "http://localhost:8001"
+    tools_base_url: str = "https://app.staging.trillium.health/temporal-rcm-workflow"
     orchestration_base_url: str = "http://localhost:8002"
     profile_engine_base_url: str = "http://localhost:8010"
     profile_engine_api_key: str = "dev-key"

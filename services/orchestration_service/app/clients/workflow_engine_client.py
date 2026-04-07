@@ -1,7 +1,7 @@
 # orchestration_service/app/clients/workflow_engine_client.py
 """
 WorkflowEngineClient
-Calls the Tools/API layer at http://34.236.125.125:8082
+Calls the Tools/API layer at https://app.staging.trillium.health/temporal-rcm-workflow
 All responses use UPPERCASE keys as confirmed from Swagger.
 """
 from __future__ import annotations
@@ -18,7 +18,7 @@ from shared.logging import get_logger
 
 log = get_logger(__name__)
 
-BASE_URL = "http://34.236.125.125:8082"
+BASE_URL = "https://app.staging.trillium.health/temporal-rcm-workflow"
 
 
 def _raise_on_error(response: httpx.Response) -> None:
@@ -68,7 +68,7 @@ class WorkflowEngineClient:
         }
         """
         r = self._http.get(
-            f"/api/v1/workflow-engine/{case_id}/rcm_case_fact"
+            f"/api/v1/workflow-engine/cases/{case_id}/facts"
         )
         _raise_on_error(r)
         facts = r.json()["data"]["facts"]
@@ -112,7 +112,7 @@ class WorkflowEngineClient:
             "task_queue"    : task_queue,
         }
         r = self._http.post(
-            "/api/v1/workflow-engine/start",
+            "/api/v1/workflow-engine/workflows/start",
             json=payload,
         )
         _raise_on_error(r)
@@ -163,7 +163,7 @@ class WorkflowEngineClient:
         }
         """
         r = self._http.get(
-            f"/api/v1/workflow-engine/{task_id}/rcm_task_and_rcm_case"
+            f"/api/v1/workflow-engine/tasks/{task_id}"
         )
         _raise_on_error(r)
         data = r.json()["data"]
@@ -189,7 +189,7 @@ class WorkflowEngineClient:
         Used AFTER node runs to store result/outcome/next_state.
         """
         r = self._http.post(
-            f"/api/v1/workflow-engine/{task_id}/rcm_task/process",
+            f"/api/v1/workflow-engine/tasks/{task_id}/process",
             json={"payload": payload},
         )
         _raise_on_error(r)
@@ -257,7 +257,7 @@ class WorkflowEngineClient:
         }
         try:
             r = self._http.post(
-                "/api/v1/workflow-engine/log-error/rcm_error",
+                "/api/v1/workflow-engine/errors",
                 json=body,
             )
             _raise_on_error(r)
@@ -331,7 +331,7 @@ class WorkflowEngineClient:
         }
         try:
             r = self._http.post(
-                "/api/v1/workflow-engine/rcm_node_history",
+                "/api/v1/workflow-engine/node-history",
                 json=body,
             )
             _raise_on_error(r)
