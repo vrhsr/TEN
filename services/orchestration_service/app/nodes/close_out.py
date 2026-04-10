@@ -15,11 +15,13 @@ Responsibilities:
 """
 from __future__ import annotations
 
+import time
 import traceback
 
 from shared.constants import (
     HANDLER_CLOSE_OUT,
     TASK_OPEN,
+    TASK_CLOSE_REASON_COMPLETED,
 )
 from shared.logging import get_logger
 from .common import build_result
@@ -67,38 +69,17 @@ def run_close_out(state: dict, tools_client) -> dict:
         outcome=outcome_payload["outcome"],
     )
 
-    # ── 1. Update RCM_TASK: set payload + state = OPEN ────────────────────────
-    if task_id:
-        try:
-            tools_client.update_task(task_id, {
-                "state_code": TASK_OPEN,
-                "result_json": outcome_payload,
-            })
-            tools_invoked.append("update_task:OPEN")
-            log.info("close_out.task_updated", case_id=case_id, task_id=task_id)
-        except Exception as exc:
-            error_detail = traceback.format_exc()
-            log.error(
-                "node4.close_out.failed",
-                case_id=case_id,
-                task_id=task_id,
-                error=str(exc),
-                node="close_out_case",
-            )
-        
-        node_ms = round((time.time() - node_start) * 1000)
-        log.info(
-            "node4.close_out.FINAL",
-            case_id=case_id,
-            task_id=task_id,
-            next_state=STATE_CASE_CLOSED_DUPLICATE if "DUPLICATE" in state.get("outcome_code", "") else state.get("next_state"),
-            outcome_code=state.get("outcome_code"),
-            tools_invoked=tools_invoked,
-            duration_ms=node_ms,
-            node="close_out_case",
-        )
-    else:
-        log.warning("node4.close_out.no_task_id", case_id=case_id, node="close_out_case")
+    node_ms = round((time.time() - node_start) * 1000)
+    log.info(
+        "node4.close_out.FINAL",
+        case_id=case_id,
+        task_id=task_id,
+        next_state=current_state,
+        outcome_code=state.get("outcome_code"),
+        tools_invoked=tools_invoked,
+        duration_ms=node_ms,
+        node="close_out_case",
+    )
 
     # ── 2. Signal Temporal ────────────────────────────────────────────────────
     try:
@@ -141,4 +122,5 @@ def run_close_out(state: dict, tools_client) -> dict:
         tools_invoked=tools_invoked,
         confidence_score=1.0,
         node_count=4,
+        state_code=TASK_CLOSE_REASON_COMPLETED,
     )

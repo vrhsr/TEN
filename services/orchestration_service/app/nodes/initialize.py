@@ -5,14 +5,7 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 
 from shared.logging import get_logger
-from shared.constants import (
-    HANDLER_INITIALIZE,
-    STATE_CASE_CLOSED_DUPLICATE,
-    STATE_CASE_CLOSED_SELF_PAY,
-    STATE_CASE_READY_FOR_CLAIM_CREATION,
-    STATE_ELIGIBILITY_VERIFICATION_QUEUE,
-    STATE_START_REGISTRATION_QUEUE,
-)
+from shared.constants import HANDLER_INITIALIZE
 
 log = get_logger(__name__)
 
@@ -81,9 +74,9 @@ def run_initialize(state: dict, tools_client) -> dict:
     insurance_fact = _get_fact(facts, "INSURANCE_FACT")
     demographics_fact = _get_fact(facts, "DEMOGRAPHICS_FACT")
 
-    print(f"   PATIENT_FACT      : {'✅ found' if patient_fact else '❌ missing'}")
-    print(f"   INSURANCE_FACT    : {'✅ found' if insurance_fact else '❌ missing'}")
-    print(f"   DEMOGRAPHICS_FACT : {'✅ found' if demographics_fact else '❌ missing'}")
+    print(f"   PATIENT_FACT      : {'found' if patient_fact else '❌ missing'}")
+    print(f"   INSURANCE_FACT    : {'found' if insurance_fact else '❌ missing'}")
+    print(f"   DEMOGRAPHICS_FACT : {'found' if demographics_fact else '❌ missing'}")
 
     log.info(
         "node1.fetch_facts.complete",
@@ -206,9 +199,9 @@ def run_initialize(state: dict, tools_client) -> dict:
             node_key=node2_key,
             node_index=2,
             duration_ms=_ms(node2_start),
-            outcome_code="DUPLICATE_FOUND",
+            outcome_code="DUPLICATE_PATIENT",
             output_summary={
-                "next_state": "HUMAN_QUEUE",
+                "next_state": "VERIFY_DUPLICATE_PATIENT",
                 "duplicate_ids": duplicate_ids,
             },
         )
@@ -216,7 +209,7 @@ def run_initialize(state: dict, tools_client) -> dict:
         return _build_result(
             case_id=case_id,
             task_id=task_id,
-            next_state="HUMAN_QUEUE",
+            next_state="VERIFY_DUPLICATE_PATIENT",
             outcome_code="DUPLICATE_PATIENT",
             note=f"Duplicate found: {len(duplicate_patients)} candidate(s).",
             facts_considered=facts_considered,
@@ -225,7 +218,7 @@ def run_initialize(state: dict, tools_client) -> dict:
             duration_ms=_ms(flow_start),
         )
 
-    print("   ✅ No duplicate found")
+    print("No duplicate found")
 
     log.info(
         "node2.check_duplicate.NO_DUPLICATE",
@@ -263,160 +256,77 @@ def run_initialize(state: dict, tools_client) -> dict:
         run_id=run_id,
     )
 
-    is_self_pay = _is_self_pay(patient_fact)
-    print(f"   is_self_pay          : {is_self_pay}")
-
-    if is_self_pay:
-        facts_considered.update({"is_self_pay": True})
-
-        log.info(
-            "node3.verify_demo_ins.DECISION",
-            case_id=case_id,
-            routing_decision="SELF_PAY",
-            next_state=STATE_CASE_CLOSED_SELF_PAY,
-            duration_ms=_ms(node3_start),
-        )
-
-        _write_node_history(
-            client=tools_client,
-            case_id=case_id,
-            task_id=task_id,
-            run_id=run_id,
-            node_key=node3_key,
-            node_index=3,
-            duration_ms=_ms(node3_start),
-            outcome_code="SELF_PAY_DETECTED",
-            output_summary={"next_state": STATE_CASE_CLOSED_SELF_PAY},
-        )
-
-        return _build_result(
-            case_id=case_id,
-            task_id=task_id,
-            next_state=STATE_CASE_CLOSED_SELF_PAY,
-            outcome_code="SELF_PAY_DETECTED",
-            note="Patient is self-pay",
-            facts_considered=facts_considered,
-            tools_invoked=tools_invoked,
-            confidence_score=1.0,
-            duration_ms=_ms(flow_start),
-        )
-
+    
+    is_self_pay = False 
     demographics_complete = _is_demographics_complete(demographics_fact)
     has_insurance = insurance_fact is not None
     eligibility_check_date = (
         insurance_fact.get("ELIGIBILITY_CHECK_DATE")
         if insurance_fact else None
     )
-    is_fresh = _is_freshly_verified(
+    is_verified_within_30_days = _is_freshly_verified(
         eligibility_check_date,
-        ELIGIBILITY_FRESHNESS_DAYS,
+        ELIGIBILITY_FRESHNESS_DAYS, # 30 Days
     )
-    place_of_service = "hospital" if case.get("facility_id") else "clinic"
+    place_of_service = "clinic"  
 
+    print(f"   is_self_pay          : {is_self_pay}")
     print(f"   demographics_complete: {demographics_complete}")
     print(f"   has_insurance        : {has_insurance}")
-    print(f"   eligibility_fresh    : {is_fresh}")
+    print(f"   verified_within_30_ds: {is_verified_within_30_days}")
     print(f"   place_of_service     : {place_of_service}")
 
     facts_considered.update({
-        "is_self_pay": False,
+        "is_self_pay": is_self_pay,
         "demographics_complete": demographics_complete,
         "has_insurance": has_insurance,
         "eligibility_check_date": eligibility_check_date,
-        "is_freshly_verified": is_fresh,
+        "is_verified_within_30_days": is_verified_within_30_days,
         "eligibility_freshness_days": ELIGIBILITY_FRESHNESS_DAYS,
         "place_of_service": place_of_service,
     })
 
-    if not demographics_complete or not has_insurance:
-        if place_of_service == "clinic":
-            next_state = "HUMAN_QUEUE"
-            outcome_code = "REGISTRATION_INCOMPLETE_CLINIC"
+    # ── Canonical Truth Table (matches truth table exactly) ──────────────────
+    # Diamond 1: do we have all demographics + insurance from client EMR?
+    if demographics_complete and has_insurance:
+        # Diamond 2: insurance verified within the past 30 days?
+        if is_verified_within_30_days:
+            # HAS_DEMO=YES + HAS_INS=YES + INS_VERIFIED_<30D=YES
+            outcome_code = "CLAIM_CREATION"
+            next_state   = "CLAIM_CREATION_QUEUE"
+            note         = "Demographics complete and eligibility recently verified"
         else:
-            next_state = STATE_START_REGISTRATION_QUEUE
-            outcome_code = "REGISTRATION_INCOMPLETE_HOSPITAL"
+            # HAS_DEMO=YES + HAS_INS=YES + INS_VERIFIED_<30D=NO
+            outcome_code = "VERIFY_ELIGIBILITY"
+            next_state   = "VERIFY_ELIGIBILITY"
+            note         = "Insurance present but eligibility not recently verified"
+    else:
+        # HAS_DEMO=NO or HAS_INS=NO
+        if is_self_pay:
+            # IS_SELF_PAY=YES
+            outcome_code = "SELF_PAY_PATIENT"
+            next_state   = "CLOSE"
+            note         = "Patient is self-pay"
+        else:
+            # IS_SELF_PAY=NO → check place of service
+            if place_of_service == "hospital":
+                # IS_HOSPITAL=YES
+                outcome_code = "NO_DEMO_HOSPITAL_PATIENT"
+                next_state   = "ACQUIRE_FACESHEET"
+                note         = "Hospital POS - routing to patient registration"
+            else:
+                # IS_CLINIC=YES
+                outcome_code = "NO_DEMO_CLINIC_PATIENT"
+                next_state   = "ACQUIRE_FACESHEET"
+                note         = "Clinic POS - check insurance in clinic EMR system"
 
-        print(f"   DECISION → {next_state}")
-
-        log.info(
-            "node3.verify_demo_ins.DECISION",
-            case_id=case_id,
-            routing_decision=outcome_code,
-            next_state=next_state,
-            duration_ms=_ms(node3_start),
-        )
-
-        _write_node_history(
-            client=tools_client,
-            case_id=case_id,
-            task_id=task_id,
-            run_id=run_id,
-            node_key=node3_key,
-            node_index=3,
-            duration_ms=_ms(node3_start),
-            outcome_code=outcome_code,
-            output_summary={
-                "next_state": next_state,
-                "demographics_complete": demographics_complete,
-                "has_insurance": has_insurance,
-            },
-        )
-
-        return _build_result(
-            case_id=case_id,
-            task_id=task_id,
-            next_state=next_state,
-            outcome_code=outcome_code,
-            note=f"Demographics or insurance missing. POS={place_of_service}",
-            facts_considered=facts_considered,
-            tools_invoked=tools_invoked,
-            confidence_score=0.9,
-            duration_ms=_ms(flow_start),
-        )
-
-    if is_fresh:
-        print(f"   DECISION → {STATE_CASE_READY_FOR_CLAIM_CREATION}")
-
-        log.info(
-            "node3.verify_demo_ins.DECISION",
-            case_id=case_id,
-            routing_decision="CLAIM_READY",
-            next_state=STATE_CASE_READY_FOR_CLAIM_CREATION,
-            duration_ms=_ms(node3_start),
-        )
-
-        _write_node_history(
-            client=tools_client,
-            case_id=case_id,
-            task_id=task_id,
-            run_id=run_id,
-            node_key=node3_key,
-            node_index=3,
-            duration_ms=_ms(node3_start),
-            outcome_code="READY_FOR_CLAIM_CREATION",
-            output_summary={"next_state": STATE_CASE_READY_FOR_CLAIM_CREATION},
-        )
-
-        return _build_result(
-            case_id=case_id,
-            task_id=task_id,
-            next_state=STATE_CASE_READY_FOR_CLAIM_CREATION,
-            outcome_code="READY_FOR_CLAIM_CREATION",
-            note="Demographics complete and eligibility recently verified",
-            facts_considered=facts_considered,
-            tools_invoked=tools_invoked,
-            confidence_score=1.0,
-            duration_ms=_ms(flow_start),
-        )
-
-    print(f"   DECISION → {STATE_ELIGIBILITY_VERIFICATION_QUEUE}")
+    print(f"   DECISION → {next_state}")
 
     log.info(
         "node3.verify_demo_ins.DECISION",
         case_id=case_id,
-        routing_decision="ELIGIBILITY_STALE",
-        next_state=STATE_ELIGIBILITY_VERIFICATION_QUEUE,
-        eligibility_check_date=eligibility_check_date,
+        routing_decision=outcome_code,
+        next_state=next_state,
         duration_ms=_ms(node3_start),
     )
 
@@ -428,19 +338,21 @@ def run_initialize(state: dict, tools_client) -> dict:
         node_key=node3_key,
         node_index=3,
         duration_ms=_ms(node3_start),
-        outcome_code="ELIGIBILITY_STALE",
-        output_summary={"next_state": STATE_ELIGIBILITY_VERIFICATION_QUEUE},
+        outcome_code=outcome_code,
+        output_summary={
+            "next_state": next_state,
+        },
     )
 
     return _build_result(
         case_id=case_id,
         task_id=task_id,
-        next_state=STATE_ELIGIBILITY_VERIFICATION_QUEUE,
-        outcome_code="ELIGIBILITY_STALE",
-        note="Insurance present but eligibility not recently verified",
+        next_state=next_state,
+        outcome_code=outcome_code,
+        note=note,
         facts_considered=facts_considered,
         tools_invoked=tools_invoked,
-        confidence_score=0.95,
+        confidence_score=0.95 if is_self_pay else 0.90,
         duration_ms=_ms(flow_start),
     )
 
@@ -528,8 +440,11 @@ def _write_node_history(
     try:
         client.create_step_history({
             "case_id": case_id,
+            "task_id": task_id,
             "correlation_id": run_id,
             "handler_key": node_key,
+            "node_index": node_index,
+            "duration_ms": duration_ms,
             "outcome_code": outcome_code,
             "output_summary_json": output_summary,
             "started_at": _now_iso(),

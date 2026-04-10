@@ -31,6 +31,7 @@ from shared.constants import (
     HANDLER_HOSPITAL_FACESHEET_REQUEST,
     HANDLER_NORMALIZE_CASE,
     HANDLER_CLOSE_OUT,
+    TASK_CLOSE_REASON_COMPLETED,
 )
 from shared.logging import get_logger
 from .registry import resolve_handler
@@ -113,12 +114,6 @@ class OrchestrationEngine:
         # ── 3. Resolve handler ────────────────────────────────────────────
         # ── 3. Resolve handler ────────────────────────────────────────────
         handler_key = resolve_handler(state_code)
-
-        log.info(
-            "engine.handler_selected",
-            case_id=case_id,
-            handler_key=handler_key,
-        )
 
         # NOTE: DB Idempotency check and IN_PROGRESS state updates have been removed.
         # State lifecycle is entirely deferred to the workflow engine.
@@ -234,15 +229,15 @@ class OrchestrationEngine:
         if task_id and not error_detail:
             try:
                 # [NEW] Step 5: Close Out (Storage)
-                # Dumping the full execution result into the payload so Temporal UI has everything
+                # Calculate state_code: node override > engine default (COMPLETED)
+                state_code = result.get("state_code") or TASK_CLOSE_REASON_COMPLETED
+                
                 task_payload = {
                     "outcome_code": result.get("outcome_code", "UNKNOWN"),
-                    "note": result.get("note", ""),
-                    "next_state": next_state,
-                    "confidence_score": result.get("confidence_score", 0.0),
-                    "tools_invoked": result.get("tools_invoked", []),
+                    "state_code": state_code,
+                    "derived_facts": result.get("facts_considered", {}),
                 }
-                log.info("engine.process_task", task_id=task_id, payload=task_payload)
+                log.info("engine.process_task", task_id=task_id, state_code=state_code)
                 self.tools.update_task(task_id, task_payload)
                 tools_invoked.append("process_task")
             except Exception as exc:

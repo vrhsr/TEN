@@ -74,12 +74,21 @@ class ToolsClient:
     )
     def update_task(self, task_id: int, payload: dict) -> dict:
         url = f"/api/v1/workflow-engine/tasks/{task_id}/process"
-        r   = self._http.post(url, json={"payload": payload})
+        
+        # 1. Pull root-level fields (for direct SQL column updates)
+        body = {}
+        if "state_code" in payload:
+            body["state_code"] = payload.pop("state_code")
+            
+        # 2. Put remaining fields into the payload JSON blob
+        body["payload"] = payload
+        
+        r = self._http.post(url, json=body)
         _raise_on_4xx_5xx(r)
         return r.json()
 
     # ══════════════════════════════════════════════════════════════════
-    # CASE                                   ← ✅ STILL INSIDE CLASS
+    # CASE                                   ←STILL INSIDE CLASS
     # ══════════════════════════════════════════════════════════════════
 
     def get_case(self, case_id: int) -> dict | None:
@@ -157,7 +166,7 @@ class ToolsClient:
         if isinstance(data.get("data"), list):
             facts = data["data"]
 
-        print(f"   get_case_facts → Found {len(facts)} facts ✅")
+        print(f"   get_case_facts → Found {len(facts)} facts")
 
         for fact in facts:
             raw = fact.get("FACT_VALUE_STR")
@@ -276,16 +285,32 @@ class ToolsClient:
 
     def duplicate_check(self, payload: dict, clinic_id: int, patient_id: int) -> dict:
         """
-        POST /api/v1/patients/{clinic_id}/{patient_id}/duplicate-check
-        Payload: {first_name, last_name, dob, patient_id}
+        Integration with Local Development Duplicate API
+        GET http://localhost:8000/api/v1/patients/duplicate-check
+        PARAMS: clinic_id, patient_id
         """
-        url = f"/api/v1/patients/{clinic_id}/{patient_id}/duplicate-check"
-        print(f"   duplicate_check → Calling: {self._base_url}{url}")
+        url = f"http://localhost:8000/api/v1/patients/duplicate-check?clinic_id={clinic_id}&patient_id={patient_id}"
         
         try:
-            r = self._http.post(url, json=payload)
+            r = self._http.get(url)  # Local API uses GET now!
+            
+            # The dev API returns HTTP 400 if a duplicate is found
+            if r.status_code == 400:
+                error_response = r.json()
+                msg = error_response.get("detail", {}).get("message", "")
+                if "Duplicate patient found" in msg:
+                    return {"has_duplicates": True, "candidates": [{"patient_id": "UNKNOWN"}]}
+                else:
+                    # Invalid patient_id or clinic_id
+                    log.warning("tools_client.duplicate_check_failed", reason=msg)
+                    return {"has_duplicates": False, "candidates": []}
+            
             _raise_on_4xx_5xx(r)
-            return r.json().get("data", {"has_duplicates": False, "candidates": []})
+            
+            # If 200 OK, there are no duplicates
+            data = r.json()
+            return {"has_duplicates": False, "candidates": []}
+            
         except Exception as exc:
             log.warning("tools_client.duplicate_check_failed", error=str(exc))
             return {"has_duplicates": False, "candidates": []}

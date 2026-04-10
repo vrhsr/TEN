@@ -20,14 +20,23 @@ class AdvanceCaseInput(BaseModel):
     trigger: AdvanceTrigger
 
 
-class AdvanceCaseOutput(BaseModel):
-    case_id: int
-    handler_key: str
-    state_before: str | None = None
-    state_after: str | None = None
+class AdvanceOutcome(BaseModel):
     outcome_code: str | None = None
     note: str | None = None
-    next_wake_at: str | None = None
+
+class AdvancePayload(BaseModel):
+    case_id: int
+    task_id: int | None = None
+    outcome: AdvanceOutcome
+    existing_facts: dict = Field(default_factory=dict)
+    payload_updated: bool = True
+    extracted_entities: dict | None = None
     confidence_score: float | None = None
-    tools_invoked: list[str] = Field(default_factory=list)
-    emit_events: list[dict] = Field(default_factory=list)
+
+class AdvanceData(BaseModel):
+    payload: AdvancePayload
+
+class AdvanceCaseResponse(BaseModel):
+    success: bool = True
+    code: int = 200
+    data: AdvanceData

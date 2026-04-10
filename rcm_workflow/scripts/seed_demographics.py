@@ -73,7 +73,7 @@ def create_case_facts(cursor, case_id, clinic_id=10, patient_id=None):
     insurance_fact = {
         "INSURANCE_ID"    : "INS-DUMMY-001",
         "CLINIC_ID"       : str(clinic_id),
-        "PATIENT_ID"      : pid,                # ──► Dynamic ✅
+        "PATIENT_ID"      : pid,               
         "PAYER_NAME"      : "Dummy Insurance Co",
         "PAYER_ID"        : "DUMMY123",
         "POLICY_NUMBER"   : "POL-000001",
@@ -84,11 +84,12 @@ def create_case_facts(cursor, case_id, clinic_id=10, patient_id=None):
         "COVERAGE_START"  : "2024-01-01",
         "COVERAGE_END"    : "2024-12-31",
         "COPAY"           : "20.00",
-        "DEDUCTIBLE"      : "1000.00"
+        "DEDUCTIBLE"      : "1000.00",
+        "ELIGIBILITY_CHECK_DATE":"2026-04-04"
     }
 
     demographics_fact = {
-        "PATIENT_ID"         : pid,             # ──► Dynamic ✅
+        "PATIENT_ID"         : pid,           
         "CLINIC_ID"          : str(clinic_id),
         "DEMOGRAPHICS_TYPE"  : "PRIMARY",
         "FIRST_NAME"         : "John",

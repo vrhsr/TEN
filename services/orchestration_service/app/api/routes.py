@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from shared.config import get_settings
 from shared.logging import get_logger
-from ..schemas.advance import AdvanceCaseOutput
+from ..schemas.advance import AdvanceCaseResponse, AdvanceData, AdvancePayload, AdvanceOutcome
 from ..graph.engine import OrchestrationEngine
 
 router   = APIRouter()
@@ -33,20 +33,41 @@ class AdvanceByCaseInput(BaseModel):
 # HELPERS
 # ══════════════════════════════════════════════════════════════════════
 
-@router.post("/tasks/advance", response_model=AdvanceCaseOutput)
-def advance_by_task(
-    task_id      : int,
-    case_id      : int,
-    x_api_secret : str | None = Header(default=None),
-):
-    _verify_internal(x_api_secret)
-    log.info("advance_task.start", task_id=task_id, case_id=case_id)
-
-    log.info(
-        "advance_task.dispatching",
-        task_id = task_id,
-        case_id = case_id,
+def _resolve_case_id_from_task(task_id: int) -> int:
+    try:
+        data = _engine.tools.get_task_and_case(task_id)
+        if "task" in data and "case" in data:
+            case_obj = data.get("case") or {}
+            task_obj = data.get("task") or {}
+            case_id = (
+                case_obj.get("RCM_CASE_ID")
+                or case_obj.get("case_id")
+                or task_obj.get("RCM_CASE_ID")
+                or task_obj.get("rcm_case_id")
+            )
+        else:
+            case_id = (
+                data.get("RCM_CASE_ID")
+                or data.get("rcm_case_id")
+                or data.get("case_id")
+            )
+        
+        if case_id:
+            return int(case_id)
+            
+    except Exception as exc:
+        log.warning("advance_task.api_lookup_failed", task_id=task_id, error=str(exc))
+        
+    raise HTTPException(
+        status_code=404,
+        detail=f"Task {task_id} not found or no case_id resolved via API.",
     )
+
+@router.post("/tasks/advance", response_model=AdvanceCaseResponse)
+def advance_by_task(task_id: int):
+
+    # ── Step 1: Context Initialization ───────────────────────────────
+    case_id = _resolve_case_id_from_task(task_id)
 
     # ── Run the engine ────────────────────────────────────────────────
     try:
@@ -73,66 +94,27 @@ def advance_by_task(
         handler_key = result.get("handler_key"),
     )
 
-    return AdvanceCaseOutput(
-        case_id          = case_id,
-        handler_key      = result.get("handler_key", "UNKNOWN"),
-        state_before     = result.get("state_before"),
-        state_after      = result.get("state_after"),
-        outcome_code     = result.get("outcome_code"),
-        note             = result.get("note"),
-        next_wake_at     = result.get("next_wake_at"),
-        confidence_score = result.get("confidence_score", 0.0),
-        tools_invoked    = result.get("tools_invoked", []),
-        emit_events      = [],
-    )
-
-
-@router.post("/cases/advance", response_model=AdvanceCaseOutput)
-def advance_by_case(
-    case_id      : int,
-    x_api_secret : str | None = Header(default=None),
-):
-    """Dev / test: drive a case directly by case_id."""
-    _verify_internal(x_api_secret)
-    log.info("advance_case.start", case_id=case_id)
-
-    try:
-        result = _engine.advance_case(
-            case_id        = case_id,
-            correlation_id = str(uuid.uuid4()),
-            task_id        = None,
+    return AdvanceCaseResponse(
+        success=True,
+        code=200,
+        data=AdvanceData(
+            payload=AdvancePayload(
+                case_id=case_id,
+                task_id=task_id,
+                outcome=AdvanceOutcome(
+                    outcome_code=result.get("outcome_code"),
+                    note=result.get("note"),
+                ),
+                existing_facts=result.get("facts_considered", {}).get("existing", {}),
+                payload_updated=True,
+                extracted_entities=None,
+                confidence_score=result.get("confidence_score")
+            )
         )
-    except Exception as exc:
-        log.error(
-            "advance_case.engine_error",
-            case_id  = case_id,
-            error    = str(exc),
-            exc_info = True,
-        )
-        raise HTTPException(status_code=500, detail=str(exc))
-
-    if result.get("error") and not result.get("next_wake_at"):
-        raise HTTPException(status_code=500, detail=result["error"])
-
-    log.info(
-        "advance_case.done",
-        case_id     = case_id,
-        outcome     = result.get("outcome_code"),
-        handler_key = result.get("handler_key"),
     )
 
-    return AdvanceCaseOutput(
-        case_id          = case_id,
-        handler_key      = result.get("handler_key", "UNKNOWN"),
-        state_before     = result.get("state_before"),
-        state_after      = result.get("state_after"),
-        outcome_code     = result.get("outcome_code"),
-        note             = result.get("note"),
-        next_wake_at     = result.get("next_wake_at"),
-        confidence_score = result.get("confidence_score", 0.0),
-        tools_invoked    = result.get("tools_invoked", []),
-        emit_events      = [],
-    )
+
+
 
 
 @router.get("/handlers")
