@@ -72,18 +72,34 @@ class ToolsClient:
         stop=stop_after_attempt(3),
         wait=wait_exponential(min=1, max=8),
     )
-    def update_task(self, task_id: int, payload: dict) -> dict:
+    def update_task(self, task_id: int, data: dict) -> dict:
         url = f"/api/v1/workflow-engine/tasks/{task_id}/process"
         
-        # 1. Pull root-level fields (for direct SQL column updates)
-        body = {}
-        if "state_code" in payload:
-            body["state_code"] = payload.pop("state_code")
-            
-        # 2. Put remaining fields into the payload JSON blob
-        body["payload"] = payload
+        # 1. Create a clean copy to manipulate
+        payload = data.copy()
+
+        # 2. Defensively extract control fields (handle both root and nested cases)
+        state_code = payload.pop("state_code", None) or payload.get("payload", {}).pop("state_code", None)
+        rcm_task_id = payload.pop("rcm_task_id", None) or payload.get("payload", {}).pop("rcm_task_id", None)
+        clinic_id = payload.pop("clinic_id", None) or payload.get("payload", {}).pop("clinic_id", None)
         
-        r = self._http.post(url, json=body)
+        # 3. If "payload" was nested, unwrap it to keep business data at the payload root
+        if "payload" in payload and isinstance(payload["payload"], dict):
+            payload = payload["payload"]
+
+        # 4. Strict Safety Check: Ensure state_code didn't leak back into business data
+        if "state_code" in payload:
+            raise ValueError("state_code must strictly be at the root, not inside the business payload.")
+
+        # 5. Define explicit Payload Contract
+        request_body = {
+            "state_code": state_code,
+            "rcm_task_id": rcm_task_id,
+            "clinic_id": clinic_id,
+            "payload": payload
+        }
+        
+        r = self._http.post(url, json=request_body)
         _raise_on_4xx_5xx(r)
         return r.json()
 
@@ -286,29 +302,35 @@ class ToolsClient:
     def duplicate_check(self, payload: dict, clinic_id: int, patient_id: int) -> dict:
         """
         Integration with Local Development Duplicate API
-        GET http://localhost:8000/api/v1/patients/duplicate-check
-        PARAMS: clinic_id, patient_id
+        GET http://localhost:8004/api/v1/patients/duplicate-check
+        PARAMS: clinic_id, patient_id, first_name, last_name, dob, middle_name
         """
-        url = f"http://localhost:8000/api/v1/patients/duplicate-check?clinic_id={clinic_id}&patient_id={patient_id}"
+        url = "http://localhost:8004/api/v1/patients/duplicate-check"
+        params = {
+            "clinic_id": clinic_id,
+            "patient_id": patient_id,
+        }
+        # Safely map payload params if present
+        for key in ["first_name", "last_name", "dob", "middle_name"]:
+            if payload.get(key):
+                params[key] = payload[key]
         
         try:
-            r = self._http.get(url)  # Local API uses GET now!
+            r = httpx.get(url, params=params, timeout=10.0)
             
-            # The dev API returns HTTP 400 if a duplicate is found
+            # The dev API returns HTTP 400 if a duplicate is found or validation fails
             if r.status_code == 400:
                 error_response = r.json()
                 msg = error_response.get("detail", {}).get("message", "")
                 if "Duplicate patient found" in msg:
                     return {"has_duplicates": True, "candidates": [{"patient_id": "UNKNOWN"}]}
                 else:
-                    # Invalid patient_id or clinic_id
+                    # Invalid patient_id, clinic_id, or data mismatch
                     log.warning("tools_client.duplicate_check_failed", reason=msg)
                     return {"has_duplicates": False, "candidates": []}
             
-            _raise_on_4xx_5xx(r)
+            r.raise_for_status()
             
-            # If 200 OK, there are no duplicates
-            data = r.json()
             return {"has_duplicates": False, "candidates": []}
             
         except Exception as exc:

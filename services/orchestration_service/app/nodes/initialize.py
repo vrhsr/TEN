@@ -70,21 +70,21 @@ def run_initialize(state: dict, tools_client) -> dict:
         )
         raise
 
-    patient_fact = _get_fact(facts, "PATIENT_FACT")
-    insurance_fact = _get_fact(facts, "INSURANCE_FACT")
-    demographics_fact = _get_fact(facts, "DEMOGRAPHICS_FACT")
+    patient_fact = _get_fact(facts, "PATIENT_INFO")
+    insurance_fact = _get_fact(facts, "INSURANCE_INFO")
+    orchestration_fact = _get_fact(facts, "ORCHESTRATION_INFO")
 
-    print(f"   PATIENT_FACT      : {'found' if patient_fact else '❌ missing'}")
-    print(f"   INSURANCE_FACT    : {'found' if insurance_fact else '❌ missing'}")
-    print(f"   DEMOGRAPHICS_FACT : {'found' if demographics_fact else '❌ missing'}")
+    print(f"   PATIENT_INFO      : {'found' if patient_fact else '❌ missing'}")
+    print(f"   INSURANCE_INFO    : {'found' if insurance_fact else '❌ missing'}")
+    print(f"   ORCHESTRATION_INFO: {'found' if orchestration_fact else '❌ missing'}")
 
     log.info(
         "node1.fetch_facts.complete",
         case_id=case_id,
         total_facts=len(facts),
-        has_patient_fact=patient_fact is not None,
-        has_insurance_fact=insurance_fact is not None,
-        has_demographics_fact=demographics_fact is not None,
+        has_patient_info=patient_fact is not None,
+        has_insurance_info=insurance_fact is not None,
+        has_orchestration_info=orchestration_fact is not None,
         duration_ms=_ms(node1_start),
         run_id=run_id,
     )
@@ -94,9 +94,9 @@ def run_initialize(state: dict, tools_client) -> dict:
         "case_id": case_id,
         "clinic_id": case.get("clinic_id"),
         "patient_id": case.get("patient_id"),
-        "has_patient_fact": patient_fact is not None,
-        "has_insurance_fact": insurance_fact is not None,
-        "has_demographics_fact": demographics_fact is not None,
+        "has_patient_info": patient_fact is not None,
+        "has_insurance_info": insurance_fact is not None,
+        "has_orchestration_info": orchestration_fact is not None,
         "total_facts": len(facts),
     })
 
@@ -111,9 +111,9 @@ def run_initialize(state: dict, tools_client) -> dict:
         outcome_code="FACTS_LOADED",
         output_summary={
             "total_facts": len(facts),
-            "has_patient_fact": patient_fact is not None,
-            "has_insurance_fact": insurance_fact is not None,
-            "has_demographics_fact": demographics_fact is not None,
+            "has_patient_info": patient_fact is not None,
+            "has_insurance_info": insurance_fact is not None,
+            "has_orchestration_info": orchestration_fact is not None,
         },
     )
 
@@ -130,33 +130,34 @@ def run_initialize(state: dict, tools_client) -> dict:
 
     print("\n   Node 2: Check Duplicate")
 
-    # ── Call duplicate check API with real patient details ────────────
-    dup_payload = {
-        "first_name" : patient_fact.get("FIRST_NAME") if patient_fact else None,
-        "last_name"  : patient_fact.get("LAST_NAME")  if patient_fact else None,
-        "dob"        : patient_fact.get("DATE_OF_BIRTH") if patient_fact else None,
-        "patient_id" : case.get("patient_id"),
-    }
-    
-    try:
-        dup_result = tools_client.duplicate_check(
-            dup_payload,
-            clinic_id=case.get("clinic_id", 0),
-            patient_id=case.get("patient_id", 0),
-        )
-        tools_invoked.append("duplicate_check")
-        
-        has_duplicates     = dup_result.get("has_duplicates", False)
-        duplicate_patients = dup_result.get("candidates", [])
-        
-        print(f"   duplicate_check → has_duplicates={has_duplicates} ({len(duplicate_patients)} candidates)")
-    except Exception as exc:
-        print(f"   Node 2: duplicate_check FAILED → {exc}")
-        has_duplicates = False
-        duplicate_patients = []
+    # ── Source of truth is the Data Loader fact ────────────
+    has_duplicates = orchestration_fact.get("DUPLICATE_FLAG", False) if orchestration_fact else False
+    duplicate_patients = []
+
+    # If the fact says there are duplicates, we attempt to fetch them from the API for context
+    if has_duplicates:
+        dup_payload = {
+            "first_name" : patient_fact.get("FIRST_NAME") if patient_fact else None,
+            "last_name"  : patient_fact.get("LAST_NAME")  if patient_fact else None,
+            "dob"        : patient_fact.get("DOB") if patient_fact else None,
+            "patient_id" : case.get("patient_id"),
+        }
+        try:
+            dup_result = tools_client.duplicate_check(
+                dup_payload,
+                clinic_id=case.get("clinic_id", 0),
+                patient_id=case.get("patient_id", 0),
+            )
+            tools_invoked.append("duplicate_check")
+            # Grab candidates if any exist, but DO NOT override the has_duplicates flag
+            duplicate_patients = dup_result.get("candidates", [])
+        except Exception as exc:
+            print(f"   Node 2: API fetch failed, but DUPLICATE_FLAG is True → {exc}")
+
+    print(f"   duplicate_check_flag → {has_duplicates} (Loaded {len(duplicate_patients)} candidates for context)")
 
     if has_duplicates:
-        duplicate_ids = [str(d.get("patient_id", "")) for d in duplicate_patients]
+        duplicate_ids = [str(d.get("patient_id", "")) for d in duplicate_patients] if duplicate_patients else ["MOCK_DUP_ID_001"]
 
         print(f"   ⚠️  DUPLICATE FOUND: {duplicate_ids}")
 
@@ -256,19 +257,16 @@ def run_initialize(state: dict, tools_client) -> dict:
         run_id=run_id,
     )
 
+    is_self_pay = orchestration_fact.get("SELF_PAY_FLAG", False) if orchestration_fact else False
+    demographics_complete = orchestration_fact.get("DEMOGRAPHICS_COMPLETE", False) if orchestration_fact else False
+    has_insurance = orchestration_fact.get("HAS_INSURANCE", False) if orchestration_fact else False
+    eligibility_check_date = orchestration_fact.get("LAST_ELIGIBILITY_CHECK_DATE") if orchestration_fact else None
     
-    is_self_pay = False 
-    demographics_complete = _is_demographics_complete(demographics_fact)
-    has_insurance = insurance_fact is not None
-    eligibility_check_date = (
-        insurance_fact.get("ELIGIBILITY_CHECK_DATE")
-        if insurance_fact else None
-    )
     is_verified_within_30_days = _is_freshly_verified(
         eligibility_check_date,
         ELIGIBILITY_FRESHNESS_DAYS, # 30 Days
     )
-    place_of_service = "clinic"  
+    place_of_service = orchestration_fact.get("PLACE_OF_SERVICE", "clinic") if orchestration_fact else "clinic"
 
     print(f"   is_self_pay          : {is_self_pay}")
     print(f"   demographics_complete: {demographics_complete}")
@@ -365,18 +363,7 @@ def _get_fact(facts: list[dict], key: str) -> dict | None:
     return None
 
 
-def _is_self_pay(patient_fact: dict | None) -> bool:
-    if not patient_fact:
-        return False
-    billing = patient_fact.get("BILLING_METHOD")
-    is_sp = patient_fact.get("IS_SELF_PAY")
-    return billing == 0 or billing == "0" or bool(is_sp)
 
-
-def _is_demographics_complete(demographics_fact: dict | None) -> bool:
-    if not demographics_fact:
-        return False
-    return all(bool(demographics_fact.get(field)) for field in REQUIRED_DEMO_FIELDS)
 
 
 def _is_freshly_verified(check_date_str: str | None, freshness_days: int) -> bool:

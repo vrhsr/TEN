@@ -36,7 +36,7 @@ class AdvanceByCaseInput(BaseModel):
 def _resolve_case_id_from_task(task_id: int) -> int:
     try:
         data = _engine.tools.get_task_and_case(task_id)
-        if "task" in data and "case" in data:
+        if "task" in data or "case" in data:
             case_obj = data.get("case") or {}
             task_obj = data.get("task") or {}
             case_id = (

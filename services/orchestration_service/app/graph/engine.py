@@ -76,6 +76,37 @@ class OrchestrationEngine:
         tools_invoked: list[str] = []
         start_time_sec = time.time()
 
+        # ── 0. Idempotency Guard ──────────────────────────────────────────
+        # If the task STATE_CODE is already COMPLETED, return cached result.
+        if task_id:
+            try:
+                existing  = self.tools.get_task_and_case(task_id)
+                task_obj  = existing.get("task") or existing
+                task_state = task_obj.get("STATE_CODE")
+                outcome    = task_obj.get("OUTCOME", "COMPLETED")
+
+                if task_state == "COMPLETED":
+                    log.info(
+                        "engine.idempotent_skip",
+                        case_id=case_id,
+                        task_id=task_id,
+                        outcome_code=outcome,
+                    )
+                    print(f"\n Task {task_id} already COMPLETED — returning cached result: {outcome}")
+                    return {
+                        "case_id": case_id,
+                        "handler_key": "IDEMPOTENT",
+                        "state_before": "COMPLETED",
+                        "state_after": "COMPLETED",
+                        "outcome_code": outcome,
+                        "note": f"Task already completed with outcome: {outcome}",
+                        "next_wake_at": None,
+                        "confidence_score": 1.0,
+                        "tools_invoked": [],
+                    }
+            except Exception as exc:
+                log.warning("engine.idempotency_check_failed", task_id=task_id, error=str(exc))
+
         # ── 1. Load full case context ─────────────────────────────────────
         case = self.tools.get_case(case_id)
         if not case:
@@ -234,8 +265,7 @@ class OrchestrationEngine:
                 
                 task_payload = {
                     "outcome_code": result.get("outcome_code", "UNKNOWN"),
-                    "state_code": state_code,
-                    "derived_facts": result.get("facts_considered", {}),
+                    "state_code": state_code
                 }
                 log.info("engine.process_task", task_id=task_id, state_code=state_code)
                 self.tools.update_task(task_id, task_payload)
@@ -279,8 +309,14 @@ class OrchestrationEngine:
 
         
         dispatch = {
-            HANDLER_INITIALIZE: lambda s: run_initialize(s, self.tools),
-            # ... rest of handlers
+            HANDLER_INITIALIZE:                 lambda s: run_initialize(s, self.tools),
+            HANDLER_GATHER_REGISTRATION:        lambda s: run_gather_registration(s, self.tools, self.profile),
+            HANDLER_VERIFY_REGISTRATION:        lambda s: run_verify_registration(s, self.tools),
+            HANDLER_VERIFY_ELIGIBILITY:         lambda s: run_verify_eligibility(s, self.tools),
+            HANDLER_SELF_REGISTRATION:          lambda s: run_self_registration(s, self.tools),
+            HANDLER_HOSPITAL_FACESHEET_REQUEST: lambda s: run_hospital_facesheet_request(s, self.tools),
+            HANDLER_NORMALIZE_CASE:             lambda s: run_normalize_case(s, self.tools),
+            HANDLER_CLOSE_OUT:                  lambda s: run_close_out(s, self.tools),
         }
 
         fn = dispatch.get(handler_key)
