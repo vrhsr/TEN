@@ -22,13 +22,13 @@ NOW = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 # Source Data — each section stored as one fact
 # ─────────────────────────────────────────────
 PATIENT_INFO = {
-    "PATIENT_ID":5,
-    "CLINIC_ID": 83622,
-    "FIRST_NAME": "yuvaraj",
-    "MIDDLE_NAME": "M",
-    "LAST_NAME": "FrankRe",
-    "DOB": "1966-07-08",
-    "GENDER": "M"
+    "PATIENT_ID": 43,
+    "CLINIC_ID": 86388,
+    "FIRST_NAME": "Heuer",#Heuer
+    "MIDDLE_NAME": "P.",
+    "LAST_NAME": "Martha",
+    "DOB": "1946-07-18",
+    "GENDER": "F"
 }
 
 CLAIM_CORE_INFO = {
@@ -49,11 +49,11 @@ INSURANCE_INFO = {
 
 ORCHESTRATION_INFO = {
     "SELF_PAY_FLAG":               False,
-    "HAS_INSURANCE":               True,
-    "DEMOGRAPHICS_COMPLETE":       True,
+    "HAS_INSURANCE":               False, # (or Demo = False)
+    "DEMOGRAPHICS_COMPLETE":       False,
     "DUPLICATE_FLAG":              False,
-    "LAST_ELIGIBILITY_CHECK_DATE": "2025-01-01", # <-- Older than 30 days (or None)
-    "PLACE_OF_SERVICE":            "clinic",
+    "LAST_ELIGIBILITY_CHECK_DATE": None,
+    "PLACE_OF_SERVICE":            "clinic", # <-- Triggers Clinic Flow
 }
 # ─────────────────────────────────────────────
 # Build facts — one fact per section,

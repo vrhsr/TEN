@@ -130,34 +130,34 @@ def run_initialize(state: dict, tools_client) -> dict:
 
     print("\n   Node 2: Check Duplicate")
 
-    # ── Source of truth is the Data Loader fact ────────────
-    has_duplicates = orchestration_fact.get("DUPLICATE_FLAG", False) if orchestration_fact else False
+    # ── Source of truth is now the real-time API ────────────
     duplicate_patients = []
 
-    # If the fact says there are duplicates, we attempt to fetch them from the API for context
-    if has_duplicates:
-        dup_payload = {
-            "first_name" : patient_fact.get("FIRST_NAME") if patient_fact else None,
-            "last_name"  : patient_fact.get("LAST_NAME")  if patient_fact else None,
-            "dob"        : patient_fact.get("DOB") if patient_fact else None,
-            "patient_id" : case.get("patient_id"),
-        }
-        try:
-            dup_result = tools_client.duplicate_check(
-                dup_payload,
-                clinic_id=case.get("clinic_id", 0),
-                patient_id=case.get("patient_id", 0),
-            )
-            tools_invoked.append("duplicate_check")
-            # Grab candidates if any exist, but DO NOT override the has_duplicates flag
-            duplicate_patients = dup_result.get("candidates", [])
-        except Exception as exc:
-            print(f"   Node 2: API fetch failed, but DUPLICATE_FLAG is True → {exc}")
+    # Unconditionally fetch from the API for real-time check
+    dup_payload = {
+        "first_name" : patient_fact.get("FIRST_NAME") if patient_fact else None,
+        "last_name"  : patient_fact.get("LAST_NAME")  if patient_fact else None,
+        "middle_name": patient_fact.get("MIDDLE_NAME") if patient_fact else None,
+        "dob"        : patient_fact.get("DOB") if patient_fact else None,
+        "patient_id" : case.get("patient_id"),
+    }
+    try:
+        dup_result = tools_client.duplicate_check(
+            dup_payload,
+            clinic_id=case.get("clinic_id", 0),
+            patient_id=case.get("patient_id", 0),
+        )
+        tools_invoked.append("duplicate_check")
+        duplicate_patients = dup_result.get("candidates", [])
+    except Exception as exc:
+        print(f"   Node 2: real-time API fetch failed → {exc}")
 
-    print(f"   duplicate_check_flag → {has_duplicates} (Loaded {len(duplicate_patients)} candidates for context)")
+    has_duplicates = len(duplicate_patients) > 0
+
+    print(f"   duplicate_check_flag → {has_duplicates} (Loaded {len(duplicate_patients)} candidates in real-time)")
 
     if has_duplicates:
-        duplicate_ids = [str(d.get("patient_id", "")) for d in duplicate_patients] if duplicate_patients else ["MOCK_DUP_ID_001"]
+        duplicate_ids = [str(d.get("patient_id", "")) for d in duplicate_patients]
 
         print(f"   ⚠️  DUPLICATE FOUND: {duplicate_ids}")
 
